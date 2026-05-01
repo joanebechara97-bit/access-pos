@@ -1022,7 +1022,7 @@ function nextReceiptPrintCount(invoiceNo, kind) {
   }
 }
 
-function printHtmlInHiddenFrame(title, html) {
+function printHtmlInHiddenFrame(title, html, onAfterPrint) {
   const frame = document.createElement('iframe');
   frame.setAttribute('title', title);
   frame.style.position = 'fixed';
@@ -1042,11 +1042,24 @@ function printHtmlInHiddenFrame(title, html) {
   frameDocument.write(html);
   frameDocument.close();
 
+  let afterPrintHandled = false;
+  const finishAfterPrint = function () {
+    if (afterPrintHandled) return;
+    afterPrintHandled = true;
+    if (typeof onAfterPrint === 'function') {
+      onAfterPrint();
+    }
+  };
+
   setTimeout(function () {
     try {
+      if (frameWindow && typeof frameWindow.addEventListener === 'function') {
+        frameWindow.addEventListener('afterprint', finishAfterPrint, { once: true });
+      }
       frameWindow.focus();
       frameWindow.print();
     } finally {
+      setTimeout(finishAfterPrint, 1200);
       setTimeout(function () {
         frame.remove();
       }, 1500);
@@ -1296,11 +1309,11 @@ async function closeDay() {
       throw new Error(closeData.error || 'Failed to close day');
     }
 
-    printDailySalesReport(statsData);
-
-    setTimeout(function () {
-      window.location.reload();
-    }, 800);
+    printDailySalesReport(statsData, function () {
+      setTimeout(function () {
+        window.location.reload();
+      }, 300);
+    });
   } catch (err) {
     console.error('closeDay error:', err);
     alert(err.message || 'Failed to close day');
@@ -1444,7 +1457,11 @@ async function confirmOrder() {
     confirmed = true;
     renderCart();
 
-    printReceipt(savedCart, confirmedOrder, discount);
+    printReceipt(savedCart, confirmedOrder, discount, function () {
+      setTimeout(function () {
+        window.location.reload();
+      }, 300);
+    });
 
     showSuccess(
       'Order confirmed - Invoice #' +
@@ -1453,16 +1470,12 @@ async function confirmOrder() {
 
     loadMyDailySales();
 
-    setTimeout(function () {
-      window.location.reload();
-    }, 250);
-
   } catch (e) {
     console.error(e);
     alert('Network error: ' + e.message);
   }
 }
-function printDailySalesReport(data) {
+function printDailySalesReport(data, onAfterPrint) {
   const now = new Date();
   const cashierName = `<%= user ? (user.username || user.name || user.email || 'Unknown') : 'Unknown' %>`;
   const logoUrl = window.location.origin + '/assets/logo-ss-png.png';
@@ -1574,10 +1587,10 @@ function printDailySalesReport(data) {
         <div class="cut-space"></div>
       </body>
     </html>
-  `);
+  `, onAfterPrint);
 }
 
-function printReceipt(items, confirmedOrder, discount) {
+function printReceipt(items, confirmedOrder, discount, onAfterPrint) {
   const now = new Date();
   const invoiceNo = confirmedOrder && confirmedOrder.invoiceNumber != null
     ? String(confirmedOrder.invoiceNumber).padStart(6, '0')
@@ -1777,7 +1790,7 @@ function printReceipt(items, confirmedOrder, discount) {
         <div class="cut-space"></div>
       </body>
     </html>
-  `);
+  `, onAfterPrint);
 }
 function newCustomer() {
 
