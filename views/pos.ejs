@@ -1063,13 +1063,24 @@ function printVoidedReceipt(order, voidReason) {
           }
 
           .void-box {
-            border: 2px solid #000;
-            padding: 6px;
-            margin: 8px 0;
+            border: 3px solid #000;
+            background: #f2f2f2;
+            padding: 8px 6px;
+            margin: 10px 0 6px;
             text-align: center;
-            font-size: 16px;
-            font-weight: 800;
-            letter-spacing: 1px;
+            font-size: 20px;
+            font-weight: 900;
+            letter-spacing: 2px;
+          }
+
+          .void-stamp {
+            border: 3px dashed #000;
+            padding: 7px 6px;
+            margin: 0 0 12px;
+            text-align: center;
+            font-size: 17px;
+            font-weight: 900;
+            letter-spacing: 3px;
           }
 
           .muted {
@@ -1090,7 +1101,8 @@ function printVoidedReceipt(order, voidReason) {
         <div class="header-title">San Stephano Daily Access</div>
         <div class="header-info">VOID / REFUND RECEIPT</div>
 
-        <div class="void-box">VOIDED RECEIPT</div>
+        <div class="void-box">VOIDED</div>
+        <div class="void-stamp">VOIDED INVOICE</div>
 
         <div class="row">
           <span>Invoice #</span>
@@ -1147,7 +1159,7 @@ function printVoidedReceipt(order, voidReason) {
 
         <div class="line"></div>
 
-        <div class="center big">THIS RECEIPT IS VOID</div>
+        <div class="center big">THIS INVOICE IS VOIDED</div>
         <div class="center small">San Stephano Resort</div>
         <div class="center small">Batroun - Lebanon</div>
 
@@ -1502,8 +1514,6 @@ function printReceipt(items, confirmedOrder, discount) {
 
   const cashierName = `<%= user ? (user.username || user.name || user.email || 'Unknown') : 'Unknown' %>`;
   const logoUrl = window.location.origin + '/assets/logo-ss-png.png';
-  const instaQR = window.location.origin + '/assets/instagram-qr-ss.png';
-
   let rows = '';
   const subtotal = getSubtotal(items);
   const discountAmount = getDiscountAmount(subtotal, discount);
@@ -1627,41 +1637,6 @@ function printReceipt(items, confirmedOrder, discount) {
             font-size: 13px;
           }
 
-          .qr-section {
-            text-align: center;
-            margin-top: 10px;
-          }
-
-          .qr-title {
-            font-size: 12px;
-            font-weight: 700;
-            margin-bottom: 4px;
-          }
-
-          .qr-subtitle {
-            font-size: 11px;
-            margin-bottom: 8px;
-          }
-
-          .qr-wrap {
-            text-align: center;
-            margin: 6px 0 8px;
-          }
-
-          .qr-wrap img {
-            width: 130px;
-            height: auto;
-            display: block;
-            margin: 0 auto;
-            image-rendering: crisp-edges;
-          }
-
-          .qr-handle {
-            font-size: 11px;
-            font-weight: 700;
-            margin-top: 4px;
-          }
-
           .cut-space {
             height: 24px;
           }
@@ -1709,19 +1684,6 @@ function printReceipt(items, confirmedOrder, discount) {
         <div class="center small">Thank you</div>
         <div class="center small">San Stephano Resort</div>
         <div class="center small">Batroun - Lebanon</div>
-
-        <div class="line"></div>
-
-        <div class="qr-section">
-          <div class="qr-title">Stay connected</div>
-          <div class="qr-subtitle">Scan to follow us</div>
-
-          <div class="qr-wrap">
-            <img src="${instaQR}" alt="Instagram QR" />
-          </div>
-
-          <div class="qr-handle">@sanstephanoresort</div>
-        </div>
 
         <div class="cut-space"></div>
 
