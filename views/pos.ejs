@@ -595,10 +595,12 @@
                 <button
                   type="button"
                   class="pos-item-btn"
+                  data-id="<%= item.id %>"
                   data-name="<%= item.name %>"
+                  data-type="<%= item.type %>"
                   data-price="<%= Number(item.price) %>"
                   data-index="<%= index %>"
-                  onclick="addToCart(this.dataset.name, Number(this.dataset.price))"
+                  onclick="addToCart(this.dataset.id, this.dataset.name, this.dataset.type, Number(this.dataset.price))"
                 >
                   <span class="btn-title">[<%= index + 1 %>] <%= item.name %></span>
                   <span class="btn-type"><%= item.type %></span>
@@ -832,7 +834,7 @@ function updateSessionButtons() {
   if (openBtn) openBtn.style.display = sessionOpen ? 'none' : 'inline-flex';
   if (closeBtn) closeBtn.style.display = sessionOpen ? 'inline-flex' : 'none';
 }
-function addToCart(category, price) {
+function addToCart(id, category, type, price) {
   if (!sessionOpen) {
     alert('Open Day first');
     return;
@@ -840,12 +842,14 @@ function addToCart(category, price) {
 
   if (confirmed) return;
 
-  const found = cart.find(c => c.category === category);
+  const found = cart.find(c => c.id === id);
   if (found) {
     found.qty += 1;
   } else {
     cart.push({
+      id,
       category,
+      type,
       qty: 1,
       price: Number(price) || 0
     });
@@ -1390,6 +1394,8 @@ async function confirmOrder() {
   }
 
   const items = cart.map(c => ({
+    id: c.id,
+    type: c.type,
     category: c.category,
     qty: c.qty
   }));
@@ -1449,7 +1455,7 @@ async function confirmOrder() {
 
     setTimeout(function () {
       window.location.reload();
-    }, 1200);
+    }, 250);
 
   } catch (e) {
     console.error(e);

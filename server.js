@@ -1212,18 +1212,21 @@ app.post('/api/orders', requireLogin, requirePerm('canConfirmOrder'), async (req
       return res.status(400).json({ error: 'no items' });
     }
 
-    const salonItems = await fetchSalonItems(req);
-
     const mappedItems = items.map((it) => {
-      const match = findItemByCategory(salonItems, it.category);
+      const itemId = String(it.id || '').trim();
+      const itemType = String(it.type || '').trim().toLowerCase();
 
-      if (!match) {
-        throw new Error(`Item not found in salon backend: ${it.category}`);
+      if (!itemId) {
+        throw new Error(`Item id is missing for ${it.category || 'item'}`);
+      }
+
+      if (!['service', 'product'].includes(itemType)) {
+        throw new Error(`Invalid item type for ${it.category || 'item'}`);
       }
 
       return {
-        id: match.id,
-        type: match.type,
+        id: itemId,
+        type: itemType,
         qty: Math.max(1, parseInt(it.qty, 10) || 1)
       };
     });
