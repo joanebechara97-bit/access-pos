@@ -1,4 +1,8 @@
 require('dotenv').config();
+const BUSINESS_TIME_ZONE = process.env.BUSINESS_TIME_ZONE || 'Asia/Beirut';
+if (!process.env.TZ) {
+  process.env.TZ = BUSINESS_TIME_ZONE;
+}
 const express = require('express');
 const path = require('path');
 const session = require('express-session');
@@ -11,6 +15,21 @@ const openSessions = new Map();
 
 const SALON_API_BASE = process.env.SALON_API_BASE || 'http://localhost:4000/api';
 const port = process.env.PORT || 10000;
+
+function formatBusinessDateTime(dateValue) {
+  if (!dateValue) return '-';
+
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: BUSINESS_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  }).format(new Date(dateValue));
+}
 
 // ----------------------
 // App config
@@ -74,6 +93,8 @@ if (process.env.DATABASE_URL) {
 app.use((req, res, next) => {
   res.locals.user = req.session?.user || null;
   res.locals.currentUser = req.session?.user || null;
+  res.locals.businessTimeZone = BUSINESS_TIME_ZONE;
+  res.locals.formatBusinessDateTime = formatBusinessDateTime;
   next();
 });
 
@@ -220,9 +241,7 @@ const rowsHtml = sales.length
           sale.date ||
           null
 
-        const dateText = dateValue
-          ? new Date(dateValue).toLocaleString()
-          : '-'
+        const dateText = formatBusinessDateTime(dateValue)
 
         const itemsText = Array.isArray(sale.lines) && sale.lines.length
           ? sale.lines
@@ -939,6 +958,20 @@ app.post('/refund/void', requireLogin, requirePerm('canRefundInvoice'), async (r
     }
 
     // 🔥 Directly void using orderId (NO need to search again)
+    const salesResponse = await axios.get(`${SALON_API_BASE}/pos/sales/today`, {
+      headers: {
+        Authorization: `Bearer ${req.session.user.token}`
+      }
+    })
+
+    const sales = Array.isArray(salesResponse.data?.sales)
+      ? salesResponse.data.sales
+      : Array.isArray(salesResponse.data)
+      ? salesResponse.data
+      : []
+
+    const existingSale = sales.find((s) => String(s.id || '') === orderId) || null
+
     await axios.post(
       `${SALON_API_BASE}/pos/sales/${orderId}/void`,
       { reason },
@@ -949,12 +982,27 @@ app.post('/refund/void', requireLogin, requirePerm('canRefundInvoice'), async (r
       }
     )
 
+    const printableSale = existingSale
+      ? {
+          ...existingSale,
+          status: 'VOIDED',
+          voidedAt: new Date().toISOString(),
+          voidedByName:
+            req.session?.user?.username ||
+            req.session?.user?.name ||
+            req.session?.user?.email ||
+            '-'
+        }
+      : null
+
     return res.render('refund', {
       title: 'Void / Refund',
       message: 'Invoice voided successfully',
       inv: '',
-      found: null,
-      invoice: null,
+      found: printableSale,
+      invoice: printableSale,
+      autoPrintVoid: true,
+      voidReason: reason,
       user: req.session.user,
       currentUser: req.session.user
     })

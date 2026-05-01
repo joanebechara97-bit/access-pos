@@ -51,7 +51,7 @@
 
         <div style="margin-top:10px;">
           <div>Invoice #: <%= found.invoiceNumber != null ? found.invoiceNumber : '-' %></div>
-          <div><b>Confirmed At:</b> <%= found.confirmedAt ? new Date(found.confirmedAt).toLocaleString('en-GB') : '-' %></div>
+          <div><b>Confirmed At:</b> <%= found.confirmedAt ? formatBusinessDateTime(found.confirmedAt) : '-' %></div>
 <% const displayTotal =
   found.total != null ? Number(found.total) :
   found.totalCents != null ? Number(found.totalCents) / 100 :
@@ -101,18 +101,113 @@
 
 <% if ((typeof autoPrintVoid !== 'undefined' && autoPrintVoid) && found) { %>
 <script>
-  function printVoidedReceipt(order, reason) {
-    const win = window.open('', '_blank', 'width=380,height=700');
+  const RECEIPT_PRINT_COUNT_KEY = 'cabine_pos_receipt_print_counts_v1';
+  const RECEIPT_TIME_ZONE = '<%= businessTimeZone || "Asia/Beirut" %>';
 
-    if (!win) {
-      alert('Popup blocked. Please allow popups to print void receipt.');
-      return;
+  function formatReceiptDate(dateValue) {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: RECEIPT_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date(dateValue));
+  }
+
+  function formatReceiptTime(dateValue) {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: RECEIPT_TIME_ZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    }).format(new Date(dateValue));
+  }
+
+  function nextReceiptPrintCount(invoiceNo, kind) {
+    try {
+      const raw = localStorage.getItem(RECEIPT_PRINT_COUNT_KEY);
+      const map = raw ? JSON.parse(raw) : {};
+      const key = `${kind || 'sale'}:${invoiceNo || 'N/A'}`;
+      const next = Number(map[key] || 0) + 1;
+      map[key] = next;
+      localStorage.setItem(RECEIPT_PRINT_COUNT_KEY, JSON.stringify(map));
+      return next;
+    } catch (err) {
+      console.error('Failed to store receipt print count:', err);
+      return 1;
     }
+  }
 
+  function printHtmlInHiddenFrame(title, html) {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('title', title);
+    frame.style.position = 'fixed';
+    frame.style.width = '0';
+    frame.style.height = '0';
+    frame.style.border = '0';
+    frame.style.opacity = '0';
+    frame.style.pointerEvents = 'none';
+    frame.style.right = '0';
+    frame.style.bottom = '0';
+    document.body.appendChild(frame);
+
+    const frameWindow = frame.contentWindow;
+    const frameDocument = frameWindow.document;
+
+    frameDocument.open();
+    frameDocument.write(html);
+    frameDocument.close();
+
+    setTimeout(function () {
+      try {
+        frameWindow.focus();
+        frameWindow.print();
+      } finally {
+        setTimeout(function () {
+          frame.remove();
+        }, 1500);
+      }
+    }, 500);
+  }
+
+  function printVoidedReceipt(order, reason) {
     const now = new Date();
-    const logoUrl = window.location.origin + '/assets/logo-ss-png.png';
+    const printableItems = Array.isArray(order.items) && order.items.length
+      ? order.items
+      : Array.isArray(order.lines)
+      ? order.lines.map(function (line) {
+          return {
+            qty: line.qty,
+            price:
+              line.price != null
+                ? line.price
+                : line.unitPriceCents != null
+                ? Number(line.unitPriceCents) / 100
+                : 0,
+            total:
+              line.total != null
+                ? line.total
+                : line.totalCents != null
+                ? Number(line.totalCents) / 100
+                : 0,
+            category:
+              line.category ||
+              line.itemName ||
+              line.service?.name ||
+              line.product?.name ||
+              line.Product?.name ||
+              line.posItem?.name ||
+              line.name ||
+              'Item'
+          };
+        })
+      : [];
+    const invoiceNo = order && order.invoiceNumber != null
+      ? String(order.invoiceNumber).padStart(6, '0')
+      : 'N/A';
+    const printCount = nextReceiptPrintCount(invoiceNo, 'void');
 
-    const itemsHtml = (order.items || []).map(function (i) {
+    const itemsHtml = printableItems.map(function (i) {
       const qty = Number(i.qty || 0);
       const lineTotal = Number(
         i.total != null ? i.total : (Number(i.price || 0) * qty)
@@ -126,8 +221,23 @@
       `;
     }).join('');
 
-    win.document.open();
-    win.document.write(`
+    const subtotal = Number(
+      order.subtotal != null
+        ? order.subtotal
+        : printableItems.reduce(function (sum, item) {
+            return sum + Number(item.qty || 0) * Number(item.price || 0);
+          }, 0)
+    );
+    const discountAmount = Number(order.discountAmount || 0);
+    const finalTotal = Number(
+      order.total != null
+        ? order.total
+        : order.totalCents != null
+        ? Number(order.totalCents) / 100
+        : Math.max(0, subtotal - discountAmount)
+    );
+
+    printHtmlInHiddenFrame('Voided Receipt', `
       <html>
         <head>
           <title>Voided Receipt</title>
@@ -152,30 +262,41 @@
               margin: 5px 0;
             }
             .header-title {
-  text-align: center;
-  font-weight: 700;
-  font-size: 14px;
-  margin-bottom: 6px;
-}
-            .void-box {
-              border: 2px solid #000;
-              padding: 6px;
-              margin: 8px 0;
               text-align: center;
-              font-size: 16px;
-              font-weight: 800;
-              letter-spacing: 1px;
+              font-weight: 700;
+              font-size: 14px;
+              margin-bottom: 6px;
+            }
+            .void-box {
+              border: 3px solid #000;
+              background: #f2f2f2;
+              padding: 8px 6px;
+              margin: 10px 0 6px;
+              text-align: center;
+              font-size: 20px;
+              font-weight: 900;
+              letter-spacing: 2px;
+            }
+            .void-stamp {
+              border: 3px dashed #000;
+              padding: 7px 6px;
+              margin: 0 0 12px;
+              text-align: center;
+              font-size: 17px;
+              font-weight: 900;
+              letter-spacing: 3px;
             }
             .cut-space { height: 24px; }
           </style>
         </head>
         <body>
           <div class="center bold">San Stephano Daily Access</div>
-          <div class="void-box">VOIDED RECEIPT</div>
+          <div class="void-box">VOIDED</div>
+          <div class="void-stamp">VOIDED INVOICE</div>
 
           <div class="row">
             <span>Invoice #</span>
-            <span class="bold">${order.invoiceNumber != null ? order.invoiceNumber : 'N/A'}</span>
+            <span class="bold">${invoiceNo}</span>
           </div>
 
           <div class="row">
@@ -185,12 +306,12 @@
 
           <div class="row">
             <span>Date</span>
-            <span class="bold">${now.toLocaleDateString('en-GB')}</span>
+            <span class="bold">${formatReceiptDate(now)}</span>
           </div>
 
           <div class="row">
             <span>Time</span>
-            <span class="bold">${now.toLocaleTimeString('en-GB')}</span>
+            <span class="bold">${formatReceiptTime(now)}</span>
           </div>
 
           <div class="row">
@@ -204,11 +325,21 @@
 
           <div class="line"></div>
 
+          <div class="line"></div>
+
+          <div class="row">
+            <span>Subtotal</span>
+            <span class="bold">$${subtotal.toFixed(2)}</span>
+          </div>
+
+          <div class="row">
+            <span>Discount</span>
+            <span class="bold">-$${discountAmount.toFixed(2)}</span>
+          </div>
+
           <div class="row">
             <span>Total</span>
-            <span class="bold">$ ${ Number(((order?.items || []).reduce((sum, item) => {
-  return sum + Number((item.qty || 0) * (item.price || 0));
-}, 0))).toFixed(2) }</span>
+            <span class="bold">$${finalTotal.toFixed(2)}</span>
           </div>
 
           <div class="line"></div>
@@ -218,21 +349,12 @@
 
           <div class="line"></div>
 
-          <div class="center big">THIS RECEIPT IS VOID</div>
+          <div class="center big">THIS INVOICE IS VOIDED</div>
+          <div class="center small">Print #${printCount}</div>
           <div class="cut-space"></div>
-
-          <script>
-            window.onload = function () {
-              setTimeout(function () {
-                window.focus();
-                window.print();
-              }, 500);
-            };
-          <\/script>
         </body>
       </html>
     `);
-    win.document.close();
   }
 </script>
 

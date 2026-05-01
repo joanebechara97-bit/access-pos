@@ -981,18 +981,111 @@ function updateShiftTimer() {
 
   durationEl.textContent = `${hours}h ${minutes}m`;
 }
-function printVoidedReceipt(order, voidReason) {
-  const win = window.open('', '_blank', 'width=380,height=700');
+const RECEIPT_PRINT_COUNT_KEY = 'cabine_pos_receipt_print_counts_v1';
+const RECEIPT_TIME_ZONE = '<%= businessTimeZone || "Asia/Beirut" %>';
 
-  if (!win) {
-    alert('Popup blocked. Please allow popups to print void receipt.');
-    return;
+function formatReceiptDate(dateValue) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: RECEIPT_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date(dateValue));
+}
+
+function formatReceiptTime(dateValue) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: RECEIPT_TIME_ZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  }).format(new Date(dateValue));
+}
+
+function nextReceiptPrintCount(invoiceNo, kind) {
+  try {
+    const raw = localStorage.getItem(RECEIPT_PRINT_COUNT_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    const key = `${kind || 'sale'}:${invoiceNo || 'N/A'}`;
+    const next = Number(map[key] || 0) + 1;
+    map[key] = next;
+    localStorage.setItem(RECEIPT_PRINT_COUNT_KEY, JSON.stringify(map));
+    return next;
+  } catch (err) {
+    console.error('Failed to store receipt print count:', err);
+    return 1;
   }
+}
 
+function printHtmlInHiddenFrame(title, html) {
+  const frame = document.createElement('iframe');
+  frame.setAttribute('title', title);
+  frame.style.position = 'fixed';
+  frame.style.width = '0';
+  frame.style.height = '0';
+  frame.style.border = '0';
+  frame.style.opacity = '0';
+  frame.style.pointerEvents = 'none';
+  frame.style.right = '0';
+  frame.style.bottom = '0';
+  document.body.appendChild(frame);
+
+  const frameWindow = frame.contentWindow;
+  const frameDocument = frameWindow.document;
+
+  frameDocument.open();
+  frameDocument.write(html);
+  frameDocument.close();
+
+  setTimeout(function () {
+    try {
+      frameWindow.focus();
+      frameWindow.print();
+    } finally {
+      setTimeout(function () {
+        frame.remove();
+      }, 1500);
+    }
+  }, 500);
+}
+
+function printVoidedReceipt(order, voidReason) {
   const now = new Date();
-  const logoUrl = window.location.origin + '/assets/logo-ss-png.png';
+  const printableItems = Array.isArray(order.items) && order.items.length
+    ? order.items
+    : Array.isArray(order.lines)
+    ? order.lines.map(line => ({
+        qty: line.qty,
+        price:
+          line.price != null
+            ? line.price
+            : line.unitPriceCents != null
+            ? Number(line.unitPriceCents) / 100
+            : 0,
+        total:
+          line.total != null
+            ? line.total
+            : line.totalCents != null
+            ? Number(line.totalCents) / 100
+            : 0,
+        category:
+          line.category ||
+          line.itemName ||
+          line.service?.name ||
+          line.product?.name ||
+          line.Product?.name ||
+          line.posItem?.name ||
+          line.name ||
+          'Item'
+      }))
+    : [];
+  const invoiceNo = order && order.invoiceNumber != null
+    ? String(order.invoiceNumber).padStart(6, '0')
+    : 'N/A';
+  const printCount = nextReceiptPrintCount(invoiceNo, 'void');
 
-  const itemsHtml = (order.items || []).map(item => {
+  const itemsHtml = printableItems.map(item => {
     const qty = Number(item.qty || 0);
     const lineTotal = Number(
       item.total != null
@@ -1008,15 +1101,23 @@ function printVoidedReceipt(order, voidReason) {
     `;
   }).join('');
 
-  const subtotal = Number(order.subtotal || 0);
+  const subtotal = Number(
+    order.subtotal != null
+      ? order.subtotal
+      : printableItems.reduce((sum, item) => {
+          return sum + Number(item.qty || 0) * Number(item.price || 0);
+        }, 0)
+  );
   const discountAmount = Number(order.discountAmount || 0);
-  const calculatedTotal = (order.items || []).reduce((sum, item) => {
-    return sum + Number((item.qty || 0) * (item.price || 0));
-  }, 0);
-  const finalTotal = calculatedTotal;
+  const finalTotal = Number(
+    order.total != null
+      ? order.total
+      : order.totalCents != null
+      ? Number(order.totalCents) / 100
+      : Math.max(0, subtotal - discountAmount)
+  );
 
-  win.document.open();
-  win.document.write(`
+  printHtmlInHiddenFrame('Voided Receipt', `
     <html>
       <head>
         <title>Voided Receipt</title>
@@ -1106,7 +1207,7 @@ function printVoidedReceipt(order, voidReason) {
 
         <div class="row">
           <span>Invoice #</span>
-          <span class="bold">${order.invoiceNumber != null ? order.invoiceNumber : 'N/A'}</span>
+          <span class="bold">${invoiceNo}</span>
         </div>
 
         <div class="row">
@@ -1116,12 +1217,12 @@ function printVoidedReceipt(order, voidReason) {
 
         <div class="row">
           <span>Date</span>
-          <span class="bold">${now.toLocaleDateString('en-GB')}</span>
+          <span class="bold">${formatReceiptDate(now)}</span>
         </div>
 
         <div class="row">
           <span>Time</span>
-          <span class="bold">${now.toLocaleTimeString('en-GB')}</span>
+          <span class="bold">${formatReceiptTime(now)}</span>
         </div>
 
         <div class="row">
@@ -1147,9 +1248,7 @@ function printVoidedReceipt(order, voidReason) {
 
         <div class="row">
           <span class="total-main">Total</span>
-          <span class="total-main">$ ${ Number(((order?.items || []).reduce((sum, item) => {
-  return sum + Number((item.qty || 0) * (item.price || 0));
-}, 0))).toFixed(2) }</span>
+          <span class="total-main">$${finalTotal.toFixed(2)}</span>
         </div>
 
         <div class="line"></div>
@@ -1162,21 +1261,12 @@ function printVoidedReceipt(order, voidReason) {
         <div class="center big">THIS INVOICE IS VOIDED</div>
         <div class="center small">San Stephano Resort</div>
         <div class="center small">Batroun - Lebanon</div>
+        <div class="center small">Print #${printCount}</div>
 
         <div class="cut-space"></div>
-
-        <script>
-          window.onload = function () {
-            setTimeout(function () {
-              window.focus();
-              window.print();
-            }, 500);
-          };
-        <\/script>
       </body>
     </html>
   `);
-  win.document.close();
 }
 async function closeDay() {
   try {
@@ -1368,13 +1458,6 @@ async function confirmOrder() {
 }
 function printDailySalesReport(data) {
   const now = new Date();
-  const win = window.open('', '_blank', 'width=380,height=850');
-
-  if (!win) {
-    alert('Popup blocked. Please allow popups to print the closing report.');
-    return;
-  }
-
   const cashierName = `<%= user ? (user.username || user.name || user.email || 'Unknown') : 'Unknown' %>`;
   const logoUrl = window.location.origin + '/assets/logo-ss-png.png';
 
@@ -1385,8 +1468,7 @@ function printDailySalesReport(data) {
     </div>
   `).join('');
 
-  win.document.open();
-  win.document.write(`
+  printHtmlInHiddenFrame('Daily Closing Report', `
     <html>
       <head>
         <title>Daily Closing Report</title>
@@ -1454,12 +1536,12 @@ function printDailySalesReport(data) {
 
         <div class="row">
           <span>Date</span>
-          <span class="value">${now.toLocaleDateString('en-GB')}</span>
+          <span class="value">${formatReceiptDate(now)}</span>
         </div>
 
         <div class="row">
           <span>Time</span>
-          <span class="value">${now.toLocaleTimeString('en-GB')}</span>
+          <span class="value">${formatReceiptTime(now)}</span>
         </div>
 
         <div class="line"></div>
@@ -1484,36 +1566,21 @@ function printDailySalesReport(data) {
 
         <div class="center">Day Closed Successfully</div>
         <div class="cut-space"></div>
-
-        <script>
-          window.onload = function () {
-            setTimeout(function () {
-              window.focus();
-              window.print();
-            }, 500);
-          };
-        <\/script>
       </body>
     </html>
   `);
-  win.document.close();
 }
 
 function printReceipt(items, confirmedOrder, discount) {
   const now = new Date();
-  const win = window.open('', '_blank', 'width=380,height=900');
-
-  if (!win) {
-    alert('Popup blocked. Please allow popups to print receipt.');
-    return;
-  }
-
   const invoiceNo = confirmedOrder && confirmedOrder.invoiceNumber != null
     ? String(confirmedOrder.invoiceNumber).padStart(6, '0')
     : 'N/A';
+  const printCount = nextReceiptPrintCount(invoiceNo, 'sale');
 
   const cashierName = `<%= user ? (user.username || user.name || user.email || 'Unknown') : 'Unknown' %>`;
   const logoUrl = window.location.origin + '/assets/logo-ss-png.png';
+  const instaQR = window.location.origin + '/assets/instagram-qr-ss.png';
   let rows = '';
   const subtotal = getSubtotal(items);
   const discountAmount = getDiscountAmount(subtotal, discount);
@@ -1552,8 +1619,7 @@ function printReceipt(items, confirmedOrder, discount) {
     `;
   }
 
-  win.document.open();
-  win.document.write(`
+  printHtmlInHiddenFrame('Receipt', `
     <html>
       <head>
         <title>Receipt</title>
@@ -1640,6 +1706,19 @@ function printReceipt(items, confirmedOrder, discount) {
           .cut-space {
             height: 24px;
           }
+
+          .qr-wrap {
+            text-align: center;
+            margin-top: 10px;
+          }
+
+          .qr-wrap img {
+            width: 120px;
+            height: auto;
+            display: block;
+            margin: 8px auto 0;
+            image-rendering: crisp-edges;
+          }
         </style>
       </head>
       <body>
@@ -1654,8 +1733,8 @@ function printReceipt(items, confirmedOrder, discount) {
 
         <div>Invoice: <span class="right">${invoiceNo}</span></div>
         <div>Cashier: <span class="right">${cashierName}</span></div>
-        <div>Date: <span class="right">${now.toLocaleDateString('en-GB')}</span></div>
-        <div>Time: <span class="right">${now.toLocaleTimeString('en-GB')}</span></div>
+        <div>Date: <span class="right">${formatReceiptDate(now)}</span></div>
+        <div>Time: <span class="right">${formatReceiptTime(now)}</span></div>
 
         <div class="line"></div>
 
@@ -1683,22 +1762,16 @@ function printReceipt(items, confirmedOrder, discount) {
 
         <div class="center small">Thank you</div>
         <div class="center small">San Stephano Resort</div>
-        <div class="center small">Batroun - Lebanon</div>
+        <div class="center small">Batroun - North Lebanon</div>
+        <div class="qr-wrap">
+          <img src="${instaQR}" alt="Instagram QR" />
+        </div>
+        <div class="center small">Print #${printCount}</div>
 
         <div class="cut-space"></div>
-
-        <script>
-          window.onload = function () {
-            setTimeout(function () {
-              window.focus();
-              window.print();
-            }, 500);
-          };
-        <\/script>
       </body>
     </html>
   `);
-  win.document.close();
 }
 function newCustomer() {
 
