@@ -35,9 +35,9 @@
 
     .site{
       width:100%;
-      max-width: 760px;
+      max-width: 920px;
       margin: 0 auto;
-      padding: 22px 16px 40px;
+      padding: 32px 20px 48px;
       flex:1;
     }
 
@@ -46,7 +46,10 @@
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      padding: 16px 18px;
+      width:100%;
+      max-width:860px;
+      margin:0 auto;
+      padding: 22px 28px;
       box-shadow: 0 8px 22px rgba(15,23,42,.06);
       display:flex;
       justify-content:center;
@@ -60,14 +63,14 @@
       justify-content:center;
     }
 
-    .brand img{ height:76px; width:auto; object-fit:contain; display:block; }
+    .brand img{ height:98px; width:auto; object-fit:contain; display:block; }
 
     .title-wrap{
       text-align:left;
       line-height:1.05;
     }
     .header-title{
-      font-size: 26px;
+      font-size: 30px;
       font-weight: 1000;
       margin:0;
     }
@@ -79,7 +82,7 @@
     }
 
     .stack{
-      margin-top: 18px;
+      margin-top: 22px;
       display:flex;
       flex-direction:column;
       gap: 16px;
@@ -90,12 +93,13 @@
       border: 1px solid var(--line);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      padding: 22px;
+      padding: 34px;
     }
 
     /* LOGIN LANDSCAPE */
     .login-card{
-      max-width:520px;
+      width:min(100%, 580px);
+      max-width:580px;
       margin:0 auto;
     }
 
@@ -112,14 +116,14 @@
 
     .login-head h2{
       margin: 0;
-      font-size: 22px;
+      font-size: 28px;
       font-weight: 1000;
     }
 
     .subtitle{
       color:var(--muted);
       margin-top: 6px;
-      font-size: 13px;
+      font-size: 15px;
     }
 
     .error{
@@ -143,10 +147,10 @@
     /* CLEAN INPUTS */
     input{
       width:100%;
-      padding: 12px;
+      padding: 15px 16px;
       border-radius: 12px;
       border: 1px solid var(--line);
-      font-size: 14px;
+      font-size: 15px;
       background: #f8fafc;
       outline:none;
       transition: .2s ease;
@@ -183,7 +187,7 @@
   grid-column: 1 / -1;
   display:grid;
   grid-template-columns: 1fr;
-  gap: 16px 18px;
+  gap: 18px;
 }
     .login-form .meta-row,
     .login-form .actions{
@@ -222,12 +226,12 @@
 
     /* ✅ single centered button */
     .actions.single{ justify-content:center; }
-    .actions.single .btn-primary{ max-width: 260px; width: 100%; }
+    .actions.single .btn-primary{ max-width:none; width: 100%; }
 
     button{
       flex:1;
       border-radius: 12px;
-      padding: 12px 14px;
+      padding: 15px 18px;
       font-weight: 1000;
       font-size: 14px;
       border: 1px solid var(--line);
@@ -310,10 +314,23 @@
       .app-header{
         flex-direction:column;
         text-align:center;
+        padding:18px;
       }
       .title-wrap{ text-align:center; }
       .login-card{ grid-template-columns: 1fr; }
       .login-form{ grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 560px){
+      .site{ padding:18px 12px 32px; }
+      .brand img{ height:76px; }
+      .header-title{ font-size:24px; }
+      .card{ padding:22px; }
+      .meta-row{
+        align-items:flex-start;
+        flex-direction:column;
+        gap:10px;
+      }
     }
   </style>
 </head>
