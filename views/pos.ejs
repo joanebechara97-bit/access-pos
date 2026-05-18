@@ -7,6 +7,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <style>
+.site{
+  max-width:min(1480px, 100%);
+  margin:0 auto;
+  padding:18px;
+}
+
 .dropdown {
   position: relative;
   display: inline-block;
@@ -66,6 +72,7 @@
       grid-template-columns:1fr;
       gap:18px;
       transition:opacity .15s ease;
+      overflow:hidden;
     }
 
     .pos-header-bar,
@@ -90,6 +97,7 @@
       display:flex;
       align-items:center;
       gap:16px;
+      min-width:0;
     }
 
     .header-logo{
@@ -102,6 +110,7 @@
       font-size:20px;
       font-weight:800;
       color:#0f172a;
+      line-height:1.15;
     }
 
     .header-actions{
@@ -145,6 +154,14 @@
       font-weight:800;
       color:#0f172a;
       line-height:1.2;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+    }
+
+    .cashier-name{
+      display:block;
+      max-width:100%;
+      font-size:clamp(13px, 1.4vw, 18px);
     }
 
     .info-card.cashier{ background:#ecfeff; }
@@ -154,8 +171,9 @@
 
     .pos-main-grid{
       display:grid;
-      grid-template-columns:1fr 1fr;
+      grid-template-columns:minmax(280px, .95fr) minmax(360px, 1.05fr);
       gap:18px;
+      align-items:start;
     }
 
     .pos-left-panel,
@@ -166,7 +184,7 @@
 
     .pos-footer-actions{
   display:grid;
-  grid-template-columns:1fr 1fr 1fr;
+  grid-template-columns:repeat(4, minmax(0, 1fr));
   gap:14px;
 }
 
@@ -264,8 +282,15 @@
 
     #cart-table{
       width:100%;
+      min-width:560px;
       border-collapse:separate;
       border-spacing:0 8px;
+    }
+
+    .cart-scroll{
+      width:100%;
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
     }
 
     #cart-table thead th{
@@ -474,14 +499,22 @@
 
     @media (max-width: 1200px){
       .pos-info-bar{
-        grid-template-columns:repeat(3, minmax(140px, 1fr));
+        grid-template-columns:repeat(4, minmax(130px, 1fr));
+      }
+
+      .pos-footer-actions{
+        grid-template-columns:repeat(2, minmax(0, 1fr));
       }
     }
 
     @media (max-width: 900px){
       .pos-header-bar{
         flex-direction:column;
-        align-items:flex-start;
+        align-items:stretch;
+      }
+
+      .header-actions{
+        justify-content:flex-start;
       }
 
       .pos-main-grid{
@@ -492,13 +525,44 @@
         grid-template-columns:1fr;
       }
 
-      .pos-footer-actions{
-        grid-template-columns:1fr;
+      .pos-info-bar{
+        grid-template-columns:repeat(2, minmax(0, 1fr));
       }
     }
 
     @media (max-width: 640px){
+      .pos-header-bar,
+      .pos-info-bar,
+      .pos-left-panel,
+      .pos-right-panel{
+        border-radius:14px;
+      }
+
+      .header-left{
+        align-items:flex-start;
+      }
+
+      .header-logo{
+        width:54px;
+      }
+
+      .header-actions{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        width:100%;
+      }
+
+      .header-actions .btn,
+      .header-actions button,
+      .dropdown{
+        width:100%;
+      }
+
       .pos-info-bar{
+        grid-template-columns:1fr;
+      }
+
+      .pos-footer-actions{
         grid-template-columns:1fr;
       }
     }
@@ -554,7 +618,7 @@
       <div class="pos-info-bar">
         <div class="info-card cashier">
           <div class="info-label">Cashier</div>
-          <div class="info-value">
+          <div class="info-value cashier-name">
             <%= (user && (user.username || user.name || user.email)) ? (user.username || user.name || user.email) : 'Unknown' %>
           </div>
         </div>
@@ -632,6 +696,7 @@
         <div class="pos-right-panel">
           <h3>Current Order</h3>
 
+          <div class="cart-scroll">
           <table id="cart-table">
             <thead>
               <tr>
@@ -651,6 +716,7 @@
               </tr>
             </tfoot>
           </table>
+          </div>
 
 <% if (user && user.perms && user.perms.canApplyDiscount) { %>
           <div class="discount-box">

@@ -17,11 +17,34 @@ const app = express();
 const SALON_API_BASE = process.env.SALON_API_BASE || 'http://localhost:4000/api';
 const SALON_TIMEOUT_MS = Number(process.env.SALON_TIMEOUT_MS || 10000);
 const POS_ITEMS_CACHE_MS = Number(process.env.POS_ITEMS_CACHE_MS || 30000);
+const DAILY_STATS_CACHE_MS = Number(process.env.DAILY_STATS_CACHE_MS || 10000);
+const SLOW_BACKEND_MS = Number(process.env.SLOW_BACKEND_MS || 1500);
 const port = process.env.PORT || 10000;
 
 axios.defaults.timeout = SALON_TIMEOUT_MS;
 axios.defaults.httpAgent = new http.Agent({ keepAlive: true });
 axios.defaults.httpsAgent = new https.Agent({ keepAlive: true });
+axios.interceptors.request.use((config) => {
+  config.metadata = { startAt: Date.now() };
+  return config;
+});
+axios.interceptors.response.use(
+  (response) => {
+    const durationMs = Date.now() - Number(response.config.metadata?.startAt || Date.now());
+    if (durationMs >= SLOW_BACKEND_MS) {
+      console.warn(`Slow backend call: ${response.config.method?.toUpperCase()} ${response.config.url} ${durationMs}ms`);
+    }
+    return response;
+  },
+  (error) => {
+    const config = error.config || {};
+    const durationMs = Date.now() - Number(config.metadata?.startAt || Date.now());
+    if (durationMs >= SLOW_BACKEND_MS) {
+      console.warn(`Slow failed backend call: ${config.method?.toUpperCase()} ${config.url} ${durationMs}ms`);
+    }
+    return Promise.reject(error);
+  }
+);
 
 function formatBusinessDateTime(dateValue) {
   if (!dateValue) return '-';
@@ -165,6 +188,7 @@ function getSessionOpenKey(req, res) {
 }
 
 const posItemsCache = new Map();
+const dailyStatsCache = new Map();
 
 function getItemsCacheKey(req) {
   const user = req.session?.user || {};
@@ -173,6 +197,20 @@ function getItemsCacheKey(req) {
 
 function clearSalonItemCache() {
   posItemsCache.clear();
+}
+
+function getDailyStatsCacheKey(req) {
+  const user = req.session?.user || {};
+  return `${user.businessId || user.business?.id || 'default'}:${user.id || user.email || 'user'}`;
+}
+
+function clearDailyStatsCache(req) {
+  if (!req) {
+    dailyStatsCache.clear();
+    return;
+  }
+
+  dailyStatsCache.delete(getDailyStatsCacheKey(req));
 }
 
 function getSessionDay(req) {
@@ -215,6 +253,7 @@ function getInvoiceNumber(sale) {
 }
 
 async function salonRequest(reqLike, urlPath, options = {}) {
+  const startedAt = Date.now();
   const token = reqLike?.session?.user?.token;
   const timeoutMs = Number(options.timeoutMs || SALON_TIMEOUT_MS);
   const controller = new AbortController();
@@ -244,6 +283,11 @@ async function salonRequest(reqLike, urlPath, options = {}) {
     throw error;
   } finally {
     clearTimeout(timeout);
+  }
+
+  const durationMs = Date.now() - startedAt;
+  if (durationMs >= SLOW_BACKEND_MS) {
+    console.warn(`Slow backend call: ${fetchOptions.method || 'GET'} ${urlPath} ${durationMs}ms`);
   }
 
   const text = await response.text();
@@ -1032,6 +1076,8 @@ app.post('/refund/void', requireLogin, requirePerm('canRefundInvoice'), async (r
       }
     )
 
+    clearDailyStatsCache(req)
+
     const printableSale = existingSale
       ? {
           ...existingSale,
@@ -1310,6 +1356,8 @@ app.post('/api/orders', requireLogin, requirePerm('canConfirmOrder'), async (req
       return res.status(500).json({ error: 'Backend sale id missing from create response' });
     }
 
+    clearDailyStatsCache(req);
+
     return res.json({
       ok: true,
       orderId: saleId,
@@ -1386,6 +1434,7 @@ app.post('/api/orders/:orderId/void', requireLogin, requirePerm('canVoidOrder'),
       });
     }
 
+    clearDailyStatsCache(req);
     return res.json(result.data);
   } catch (err) {
     console.error('VOID ORDER ERROR:', err);
@@ -1395,6 +1444,13 @@ app.post('/api/orders/:orderId/void', requireLogin, requirePerm('canVoidOrder'),
 
 app.get('/api/stats/my-daily-sales', requireLogin, requirePerm('canAccessPOS'), async (req, res) => {
   try {
+    const cacheKey = getDailyStatsCacheKey(req);
+    const cached = dailyStatsCache.get(cacheKey);
+
+    if (cached && cached.expiresAt > Date.now()) {
+      return res.json(cached.data);
+    }
+
     const result = await salonRequest(req, '/pos/sales/today');
 
     if (!result.ok) {
@@ -1410,11 +1466,18 @@ app.get('/api/stats/my-daily-sales', requireLogin, requirePerm('canAccessPOS'), 
     const confirmedSales = sales.filter((x) => x.status === 'CONFIRMED');
     const revenue = Number(result.data?.totalCents || 0) / 100;
 
-    return res.json({
+    const payload = {
       revenue,
       invoices: confirmedSales.length,
       breakdown: []
+    };
+
+    dailyStatsCache.set(cacheKey, {
+      expiresAt: Date.now() + DAILY_STATS_CACHE_MS,
+      data: payload
     });
+
+    return res.json(payload);
   } catch (err) {
     console.error('GET /api/stats/my-daily-sales error:', err);
     return res.status(500).json({ error: 'Failed to load daily sales' });
