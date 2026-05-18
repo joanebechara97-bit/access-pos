@@ -5,16 +5,23 @@ if (!process.env.TZ) {
 }
 const express = require('express');
 const path = require('path');
+const http = require('http');
+const https = require('https');
 const session = require('express-session');
 const pg = require('pg');
 const connectPgSimple = require('connect-pg-simple');
 const axios = require('axios');
 
 const app = express();
-const openSessions = new Map();
 
 const SALON_API_BASE = process.env.SALON_API_BASE || 'http://localhost:4000/api';
+const SALON_TIMEOUT_MS = Number(process.env.SALON_TIMEOUT_MS || 10000);
+const POS_ITEMS_CACHE_MS = Number(process.env.POS_ITEMS_CACHE_MS || 30000);
 const port = process.env.PORT || 10000;
+
+axios.defaults.timeout = SALON_TIMEOUT_MS;
+axios.defaults.httpAgent = new http.Agent({ keepAlive: true });
+axios.defaults.httpsAgent = new https.Agent({ keepAlive: true });
 
 function formatBusinessDateTime(dateValue) {
   if (!dateValue) return '-';
@@ -38,54 +45,82 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.set('trust proxy', 1);
 
-app.use(express.static(path.join(__dirname, 'public')));
-app.use('/assets', express.static(path.join(__dirname)));
+const staticOptions = {
+  etag: true,
+  maxAge: process.env.NODE_ENV === 'production' ? '7d' : '1h'
+};
+
+app.use(express.static(path.join(__dirname, 'public'), staticOptions));
+app.use('/assets', express.static(path.join(__dirname, 'public', 'assets'), staticOptions));
+app.get('/assets/logo-ss-png.png', (req, res) => {
+  res.sendFile(path.join(__dirname, 'logo-ss-png.png'), { maxAge: staticOptions.maxAge });
+});
+app.get('/assets/job-logo-png.png', (req, res) => {
+  res.sendFile(path.join(__dirname, 'job-logo-png.png'), { maxAge: staticOptions.maxAge });
+});
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 // ----------------------
 // Session
 // ----------------------
-if (process.env.DATABASE_URL) {
-  const pgSession = connectPgSimple(session);
-  const pgPool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+function createSessionMiddleware(store) {
+  return session({
+    ...(store ? { store } : {}),
+    secret: process.env.SESSION_SECRET || 'possecret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === 'production',
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 1000 * 60 * 60 * 12
+    }
   });
-
-  app.use(
-    session({
-      store: new pgSession({
-        pool: pgPool,
-        tableName: 'user_sessions',
-        createTableIfMissing: true
-      }),
-      secret: process.env.SESSION_SECRET || 'possecret',
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        httpOnly: true,
-        sameSite: 'lax',
-        maxAge: 1000 * 60 * 60 * 12
-      }
-    })
-  );
-} else {
-  app.use(
-    session({
-      secret: process.env.SESSION_SECRET || 'possecret',
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        secure: false,
-        httpOnly: true,
-        sameSite: 'lax',
-        maxAge: 1000 * 60 * 60 * 12
-      }
-    })
-  );
 }
+
+let sessionMiddleware = createSessionMiddleware();
+
+if (process.env.DATABASE_URL) {
+  try {
+    const pgSession = connectPgSimple(session);
+    const pgPool = new pg.Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }
+    });
+
+    pgPool.on('error', (error) => {
+      console.error('Session database pool error, continuing with current sessions:', error.message);
+    });
+
+    const store = new pgSession({
+      pool: pgPool,
+      tableName: 'user_sessions',
+      createTableIfMissing: true
+    });
+
+    if (typeof store.on === 'function') {
+      store.on('error', (error) => {
+        console.error('Session store error, requests will keep using existing middleware:', error.message);
+      });
+    }
+
+    sessionMiddleware = createSessionMiddleware(store);
+  } catch (error) {
+    console.error('Failed to initialize Postgres session store, falling back to memory sessions:', error.message);
+  }
+}
+
+app.use((req, res, next) => {
+  sessionMiddleware(req, res, (error) => {
+    if (error) {
+      console.error('Session middleware failure, retrying with memory session store:', error.message);
+      const fallbackMiddleware = createSessionMiddleware();
+      return fallbackMiddleware(req, res, next);
+    }
+    return next();
+  });
+});
 
 // ----------------------
 // Locals
@@ -129,6 +164,26 @@ function getSessionOpenKey(req, res) {
   return `cabine:${userId}`;
 }
 
+const posItemsCache = new Map();
+
+function getItemsCacheKey(req) {
+  const user = req.session?.user || {};
+  return user.businessId || user.business?.id || user.email || 'default';
+}
+
+function clearSalonItemCache() {
+  posItemsCache.clear();
+}
+
+function getSessionDay(req) {
+  return req.session?.posDay || null;
+}
+
+function isSessionDayOpen(req) {
+  const sessionDay = getSessionDay(req);
+  return Boolean(sessionDay && sessionDay.isOpen);
+}
+
 function formatMoneyFromCents(cents) {
   return `$${(Number(cents || 0) / 100).toFixed(2)}`;
 }
@@ -161,6 +216,9 @@ function getInvoiceNumber(sale) {
 
 async function salonRequest(reqLike, urlPath, options = {}) {
   const token = reqLike?.session?.user?.token;
+  const timeoutMs = Number(options.timeoutMs || SALON_TIMEOUT_MS);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   const headers = {
     ...(options.headers || {})
@@ -170,10 +228,23 @@ async function salonRequest(reqLike, urlPath, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${SALON_API_BASE}${urlPath}`, {
-    ...options,
-    headers
-  });
+  const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
+
+  let response;
+  try {
+    response = await fetch(`${SALON_API_BASE}${urlPath}`, {
+      ...fetchOptions,
+      headers,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(`Salon backend timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const text = await response.text();
   let data = null;
@@ -192,6 +263,13 @@ async function salonRequest(reqLike, urlPath, options = {}) {
 }
 
 async function fetchSalonItems(req) {
+  const cacheKey = getItemsCacheKey(req);
+  const cached = posItemsCache.get(cacheKey);
+
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.items;
+  }
+
   const result = await salonRequest(req, '/pos/items');
 
   if (!result.ok) {
@@ -204,7 +282,7 @@ async function fetchSalonItems(req) {
 
   const items = Array.isArray(result.data) ? result.data : [];
 
-  return items.map((item) => ({
+  const mappedItems = items.map((item) => ({
     id: item.id,
     name: item.name,
     type: item.type,
@@ -212,6 +290,13 @@ async function fetchSalonItems(req) {
     price: Number(item.priceCents || 0) / 100,
     isActive: item.isActive !== false
   }));
+
+  posItemsCache.set(cacheKey, {
+    expiresAt: Date.now() + POS_ITEMS_CACHE_MS,
+    items: mappedItems
+  });
+
+  return mappedItems;
 }
 
 function findItemByCategory(items, category) {
@@ -506,7 +591,7 @@ app.get('/admin/users', requireLogin, requirePerm('canManageUsers'), async (req,
   try {
     const q = String(req.query.q || '').trim().toLowerCase()
 
-    const response = await axios.get(`${SALON_API_BASE}/users`, {
+    const response = await axios.get(`${SALON_API_BASE}/users${buildQueryString({ q })}`, {
       headers: {
         Authorization: `Bearer ${req.session.user.token}`
       }
@@ -544,15 +629,6 @@ app.get('/admin/users', requireLogin, requirePerm('canManageUsers'), async (req,
       permissions: u.permissions || {},
       raw: u
     }))
-
-    if (q) {
-      users = users.filter((u) =>
-        String(u.email).toLowerCase().includes(q) ||
-        String(u.username).toLowerCase().includes(q) ||
-        String(u.name).toLowerCase().includes(q) ||
-        String(u.role).toLowerCase().includes(q)
-      )
-    }
 
     return res.render('admin_users', {
       title: 'Users',
@@ -723,23 +799,13 @@ app.get('/admin/users/new', requireLogin, requirePerm('canManageUsers'), (req, r
 
 app.get('/admin/users/:id/edit', requireLogin, requirePerm('canManageUsers'), async (req, res) => {
   try {
-    const response = await axios.get(`${SALON_API_BASE}/users`, {
+    const response = await axios.get(`${SALON_API_BASE}/users/${req.params.id}`, {
       headers: {
         Authorization: `Bearer ${req.session.user.token}`
       }
     });
 
-    let users = [];
-
-    if (Array.isArray(response.data)) {
-      users = response.data;
-    } else if (Array.isArray(response.data?.users)) {
-      users = response.data.users;
-    } else if (Array.isArray(response.data?.data)) {
-      users = response.data.data;
-    }
-
-    const editUser = users.find((u) => u.id === req.params.id);
+    const editUser = response.data?.user || response.data?.data || response.data;
 
     if (!editUser) {
       return res.render('admin_users', {
@@ -820,23 +886,13 @@ app.get('/admin/users/:id/edit', requireLogin, requirePerm('canManageUsers'), as
 
 app.post('/admin/users/:id/toggle', requireLogin, requirePerm('canManageUsers'), async (req, res) => {
   try {
-    const response = await axios.get(`${SALON_API_BASE}/users`, {
+    const response = await axios.get(`${SALON_API_BASE}/users/${req.params.id}`, {
       headers: {
         Authorization: `Bearer ${req.session.user.token}`
       }
     })
 
-    let users = []
-
-    if (Array.isArray(response.data)) {
-      users = response.data
-    } else if (Array.isArray(response.data?.users)) {
-      users = response.data.users
-    } else if (Array.isArray(response.data?.data)) {
-      users = response.data.data
-    }
-
-    const targetUser = users.find((u) => u.id === req.params.id)
+    const targetUser = response.data?.user || response.data?.data || response.data
 
     if (!targetUser) {
       return res.redirect('/admin/users')
@@ -958,19 +1014,13 @@ app.post('/refund/void', requireLogin, requirePerm('canRefundInvoice'), async (r
     }
 
     // 🔥 Directly void using orderId (NO need to search again)
-    const salesResponse = await axios.get(`${SALON_API_BASE}/pos/sales/today`, {
+    const saleResponse = await axios.get(`${SALON_API_BASE}/pos/sales/${orderId}`, {
       headers: {
         Authorization: `Bearer ${req.session.user.token}`
       }
     })
 
-    const sales = Array.isArray(salesResponse.data?.sales)
-      ? salesResponse.data.sales
-      : Array.isArray(salesResponse.data)
-      ? salesResponse.data
-      : []
-
-    const existingSale = sales.find((s) => String(s.id || '') === orderId) || null
+    const existingSale = saleResponse.data?.sale || saleResponse.data?.data || saleResponse.data || null
 
     await axios.post(
       `${SALON_API_BASE}/pos/sales/${orderId}/void`,
@@ -1068,19 +1118,13 @@ app.get('/refund', requireLogin, requirePerm('canRefundInvoice'), async (req, re
     let found = null
 
     if (inv) {
-      const response = await axios.get(`${SALON_API_BASE}/pos/sales/today`, {
+      const response = await axios.get(`${SALON_API_BASE}/pos/sales/by-invoice/${encodeURIComponent(inv)}`, {
         headers: {
           Authorization: `Bearer ${req.session.user.token}`
         }
       })
 
-      const sales = Array.isArray(response.data?.sales)
-        ? response.data.sales
-        : Array.isArray(response.data)
-        ? response.data
-        : []
-
-      found = sales.find((s) => String(s.invoiceNumber || '') === inv) || null
+      found = response.data?.sale || response.data?.data || response.data || null
     }
 
   return res.render('refund', {
@@ -1142,6 +1186,7 @@ app.post('/api/items', requireLogin, requirePerm('canManageItems'), async (req, 
       });
     }
 
+    clearSalonItemCache();
     return res.json(result.data);
   } catch (err) {
     console.error('POST /api/items proxy error:', err);
@@ -1163,6 +1208,7 @@ app.put('/api/items/:id', requireLogin, requirePerm('canManageItems'), async (re
       });
     }
 
+    clearSalonItemCache();
     return res.json(result.data);
   } catch (err) {
     console.error('PUT /api/items/:id proxy error:', err);
@@ -1176,12 +1222,14 @@ app.put('/api/items/:id', requireLogin, requirePerm('canManageItems'), async (re
 app.get('/pos', requireLogin, requirePerm('canAccessPOS'), async (req, res) => {
   try {
     const currentUser = getCurrentUser(req, res)
-    const items = await fetchSalonItems(req)
+    const [items, invoiceResult] = await Promise.all([
+      fetchSalonItems(req),
+      salonRequest(req, '/pos/next-invoice')
+    ])
 
-    const sessionData = openSessions.get(getSessionOpenKey(req, res))
-    const sessionOpen = !!(sessionData && sessionData.isOpen)
+    const sessionData = getSessionDay(req)
+    const sessionOpen = isSessionDayOpen(req)
 
-    const invoiceResult = await salonRequest(req, '/pos/next-invoice')
     const nextInvoiceNumber = invoiceResult.ok
       ? Number(invoiceResult.data?.nextInvoiceNumber || 1)
       : 1
@@ -1227,7 +1275,8 @@ app.post('/api/orders', requireLogin, requirePerm('canConfirmOrder'), async (req
       return {
         id: itemId,
         type: itemType,
-        qty: Math.max(1, parseInt(it.qty, 10) || 1)
+        qty: Math.max(1, parseInt(it.qty, 10) || 1),
+        unitPriceCents: Math.max(0, Math.round(Number(it.unitPriceCents || 0)))
       };
     });
 
@@ -1236,6 +1285,7 @@ app.post('/api/orders', requireLogin, requirePerm('canConfirmOrder'), async (req
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         items: mappedItems,
+        autoConfirm: true,
         discount: Number(discountAmount || 0)
       })
     });
@@ -1265,7 +1315,8 @@ app.post('/api/orders', requireLogin, requirePerm('canConfirmOrder'), async (req
       orderId: saleId,
       saleId,
       id: saleId,
-      sale
+      sale,
+      ...sale
     });
   } catch (e) {
     console.error('POST /api/orders error:', e);
@@ -1454,15 +1505,20 @@ app.get('/reports', requireLogin, (req, res) => {
 app.post('/api/session/open', requireLogin, requirePerm('canAccessPOS'), async (req, res) => {
   try {
     const sessionKey = getSessionOpenKey(req, res);
-    const existing = openSessions.get(sessionKey);
+    const existing = getSessionDay(req);
 
     if (existing && existing.isOpen) {
       return res.status(400).json({ error: 'Day is already open' });
     }
 
-    openSessions.set(sessionKey, {
+    req.session.posDay = {
+      key: sessionKey,
       isOpen: true,
-      openedAt: new Date()
+      openedAt: new Date().toISOString()
+    };
+
+    await new Promise((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve(null)));
     });
 
     return res.json({ ok: true });
@@ -1475,7 +1531,7 @@ app.post('/api/session/open', requireLogin, requirePerm('canAccessPOS'), async (
 app.post('/api/session/close', requireLogin, requirePerm('canAccessPOS'), async (req, res) => {
   try {
     const sessionKey = getSessionOpenKey(req, res);
-    const existing = openSessions.get(sessionKey);
+    const existing = getSessionDay(req);
 
     if (!existing || !existing.isOpen) {
       return res.status(400).json({ error: 'Day is already closed' });
@@ -1483,10 +1539,15 @@ app.post('/api/session/close', requireLogin, requirePerm('canAccessPOS'), async 
 
     const closedAt = new Date();
 
-    openSessions.set(sessionKey, {
+    req.session.posDay = {
       ...existing,
+      key: sessionKey,
       isOpen: false,
-      closedAt
+      closedAt: closedAt.toISOString()
+    };
+
+    await new Promise((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve(null)));
     });
 
     return res.json({

@@ -65,6 +65,7 @@
       display:grid;
       grid-template-columns:1fr;
       gap:18px;
+      transition:opacity .15s ease;
     }
 
     .pos-header-bar,
@@ -177,6 +178,12 @@
       border:none;
       box-shadow:0 8px 22px rgba(15,23,42,.08);
       cursor:pointer;
+      transition:transform .15s ease, box-shadow .15s ease, opacity .15s ease, background .15s ease;
+    }
+
+    .pos-footer-actions button:not(:disabled):hover{
+      transform:translateY(-1px);
+      box-shadow:0 12px 26px rgba(15,23,42,.11);
     }
 
     #confirm-btn{
@@ -188,6 +195,15 @@
     #new-btn:disabled{
       opacity:.5;
       cursor:not-allowed;
+    }
+
+    body.is-submitting .pos-item-btn,
+    body.is-submitting #cart-table input,
+    body.is-submitting .discount-box input,
+    body.is-submitting .discount-box select,
+    body.is-submitting .quick-discounts button{
+      pointer-events:none;
+      opacity:.65;
     }
 
     #new-btn{
@@ -699,6 +715,7 @@ let lastConfirmedCart = null;
 const LAST_RECEIPT_KEY = 'last_confirmed_receipt';
   let cart = [];
   let confirmed = false;
+  let isSubmitting = false;
 const posConfig = document.getElementById('pos-config');
 let sessionOpen = posConfig && posConfig.dataset.sessionOpen === 'true';
 const POS_TAB_KEY = 'cabine_pos_tab_open';
@@ -717,7 +734,17 @@ window.addEventListener('beforeunload', function () {
     const confirmBtn = document.getElementById('confirm-btn');
     const newBtn = document.getElementById('new-btn');
 
-    if (confirmBtn) confirmBtn.disabled = !sessionOpen || confirmed || cart.length === 0;
+    document.body.classList.toggle('is-submitting', isSubmitting);
+
+    if (confirmBtn) {
+      if (!confirmBtn.dataset.defaultLabel) {
+        confirmBtn.dataset.defaultLabel = confirmBtn.textContent;
+      }
+
+      confirmBtn.disabled = !sessionOpen || confirmed || isSubmitting || cart.length === 0;
+      confirmBtn.textContent = isSubmitting ? 'Confirming...' : confirmBtn.dataset.defaultLabel;
+    }
+
     if (newBtn) newBtn.disabled = !sessionOpen || !confirmed;
   }
 
@@ -799,14 +826,14 @@ window.addEventListener('beforeunload', function () {
       if (!typeEl || !symbolEl) return;
       symbolEl.textContent = typeEl.value === 'percent' ? '%' : '$';
     }
-    function clearCart(){
-  if (confirmed) return;
+function clearCart(){
+  if (confirmed || isSubmitting) return;
   cart = [];
   renderCart();
 }
 function applyQuickDiscount(percent){
 
-  if (confirmed) return;
+  if (confirmed || isSubmitting) return;
 
   const value = document.getElementById('discount-value');
   const type = document.getElementById('discount-type');
@@ -840,7 +867,7 @@ function addToCart(id, category, type, price) {
     return;
   }
 
-  if (confirmed) return;
+  if (confirmed || isSubmitting) return;
 
   const found = cart.find(c => c.id === id);
   if (found) {
@@ -917,7 +944,7 @@ function addToCart(id, category, type, price) {
     }
 
     function updateQty(i, v) {
-      if (confirmed) return;
+      if (confirmed || isSubmitting) return;
 
       const qty = Math.max(1, parseInt(v, 10) || 1);
       cart[i].qty = qty;
@@ -925,7 +952,7 @@ function addToCart(id, category, type, price) {
     }
 
     function deleteItem(i) {
-      if (confirmed) return;
+      if (confirmed || isSubmitting) return;
 
       cart.splice(i, 1);
       renderCart();
@@ -1366,6 +1393,10 @@ function loadLastReceipt() {
     return null;
   }
 }
+function prepareNextOrder() {
+  newCustomer();
+  loadMyDailySales();
+}
 async function loadMyDailySales() {
   try {
     const res = await fetch('/api/stats/my-daily-sales', {
@@ -1399,18 +1430,22 @@ async function confirmOrder() {
     return;
   }
 
-  if (confirmed) return;
+  if (confirmed || isSubmitting) return;
 
   if (cart.length === 0) {
     alert('Cart empty');
     return;
   }
 
+  isSubmitting = true;
+  setButtons();
+
   const items = cart.map(c => ({
     id: c.id,
     type: c.type,
     category: c.category,
-    qty: c.qty
+    qty: c.qty,
+    unitPriceCents: Math.round((Number(c.price || 0) * 100))
   }));
 
   const discount = getDiscountData();
@@ -1432,18 +1467,7 @@ async function confirmOrder() {
       return;
     }
 
-    const order = await createRes.json();
-
-    const confirmRes = await fetch('/api/orders/' + order.id + '/confirm', {
-      method: 'POST'
-    });
-
-    const confirmedOrder = await confirmRes.json();
-
-    if (!confirmRes.ok) {
-      alert('Confirm failed: ' + (confirmedOrder.error || 'Unknown error'));
-      return;
-    }
+    const confirmedOrder = await createRes.json();
 
     const savedCart = JSON.parse(JSON.stringify(cart));
 
@@ -1454,25 +1478,20 @@ async function confirmOrder() {
       invoiceBadge.textContent = String(Number(confirmedOrder.invoiceNumber) + 1);
     }
 
-    confirmed = true;
-    renderCart();
-
-    printReceipt(savedCart, confirmedOrder, discount, function () {
-      setTimeout(function () {
-        window.location.reload();
-      }, 300);
-    });
+    printReceipt(savedCart, confirmedOrder, discount);
+    prepareNextOrder();
 
     showSuccess(
       'Order confirmed - Invoice #' +
       (confirmedOrder.invoiceNumber != null ? confirmedOrder.invoiceNumber : 'N/A')
     );
 
-    loadMyDailySales();
-
   } catch (e) {
     console.error(e);
     alert('Network error: ' + e.message);
+  } finally {
+    isSubmitting = false;
+    setButtons();
   }
 }
 function printDailySalesReport(data, onAfterPrint) {
