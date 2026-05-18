@@ -481,3 +481,263 @@ input:focus, select:focus{
   background:#f8fafc;
   box-shadow:0 8px 20px rgba(0,0,0,0.08);
 }
+
+/* ===== POS-style shared shell for all pages ===== */
+body{
+  background:#f5f7fb;
+  color:#0f172a;
+}
+
+.site,
+.wrap{
+  width:100%;
+  max-width:min(1480px, 100%);
+  margin:0 auto;
+  padding:18px;
+}
+
+header.app-header{
+  width:100%;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:20px;
+  padding:18px 20px;
+  border:0;
+  border-radius:20px;
+  background:#fff;
+  box-shadow:0 8px 24px rgba(15,23,42,.06);
+}
+
+header.app-header::before{
+  content:"";
+  display:block;
+  width:70px;
+  height:54px;
+  flex:0 0 auto;
+  background:url("/assets/logo-ss-png.png") center / contain no-repeat;
+}
+
+header.app-header .app-title{
+  flex:1;
+  min-width:0;
+  text-align:left;
+  font-size:20px;
+  line-height:1.15;
+  font-weight:900;
+  color:#0f172a;
+}
+
+.app-actions{
+  justify-content:flex-end;
+}
+
+.card,
+.cardx{
+  background:#fff;
+  border:0;
+  border-radius:20px;
+  box-shadow:0 8px 24px rgba(15,23,42,.06);
+  padding:18px;
+}
+
+.cardx{
+  margin-top:18px;
+}
+
+.btn,
+.btn.logout-btn,
+.btn2,
+button.btn,
+a.btn{
+  min-height:42px;
+  border:0;
+  border-radius:12px;
+  padding:10px 14px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  font-weight:800;
+  text-decoration:none;
+  color:#0f172a;
+  background:#fff;
+  box-shadow:0 8px 22px rgba(15,23,42,.08);
+  transition:transform .15s ease, box-shadow .15s ease, background .15s ease, opacity .15s ease;
+}
+
+.btn:hover,
+.btn2:hover,
+button.btn:hover,
+a.btn:hover{
+  filter:none;
+  transform:translateY(-1px);
+  box-shadow:0 12px 26px rgba(15,23,42,.11);
+}
+
+.btn.primary,
+.btn-primary,
+button.btn-primary{
+  border:0;
+  color:#fff;
+  background:#111827;
+  box-shadow:0 8px 22px rgba(15,23,42,.12);
+}
+
+.btn.secondary,
+.btn-secondary,
+.btn2{
+  color:#111827;
+  background:#fff;
+}
+
+.btn.danger,
+button.btn.danger{
+  background:#fff5f5;
+  color:#991b1b;
+  box-shadow:inset 0 0 0 1px #fecaca;
+}
+
+.btn.success,
+button.btn.success{
+  background:#f0fdf4;
+  color:#166534;
+  box-shadow:inset 0 0 0 1px #bbf7d0;
+}
+
+input,
+select,
+textarea{
+  width:100%;
+  min-height:42px;
+  border:0;
+  border-radius:12px;
+  padding:10px 12px;
+  background:#fff;
+  color:#0f172a;
+  box-shadow:inset 0 0 0 1px rgba(15,23,42,.08);
+}
+
+input:focus,
+select:focus,
+textarea:focus{
+  outline:none;
+  box-shadow:inset 0 0 0 1px #93c5fd, 0 0 0 3px rgba(59,130,246,.15);
+}
+
+.card > table,
+.cardx > table,
+.table{
+  min-width:720px;
+}
+
+.card:has(table),
+.cardx:has(table){
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+}
+
+table,
+.table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0 8px;
+  margin-top:8px;
+}
+
+thead th,
+.table th{
+  padding:0 10px 6px;
+  background:transparent;
+  color:#475569;
+  font-size:13px;
+  font-weight:800;
+  text-align:left;
+  border:0;
+  white-space:nowrap;
+}
+
+tbody tr{
+  background:#f8fafc;
+}
+
+tbody td,
+.table td{
+  padding:12px 10px;
+  border:0;
+  vertical-align:middle;
+}
+
+tbody tr td:first-child{
+  border-top-left-radius:12px;
+  border-bottom-left-radius:12px;
+}
+
+tbody tr td:last-child{
+  border-top-right-radius:12px;
+  border-bottom-right-radius:12px;
+}
+
+.badge{
+  border:0;
+  border-radius:999px;
+  padding:5px 10px;
+  font-weight:800;
+  box-shadow:inset 0 0 0 1px rgba(15,23,42,.08);
+}
+
+.site-footer{
+  max-width:min(1480px, 100%);
+  margin:28px auto 0;
+  padding:14px 18px;
+}
+
+@media (max-width:900px){
+  .site,
+  .wrap{
+    padding:14px;
+  }
+
+  header.app-header{
+    align-items:stretch;
+    flex-direction:column;
+  }
+
+  header.app-header::before{
+    width:58px;
+    height:48px;
+  }
+
+  header.app-header .app-title{
+    text-align:left;
+  }
+
+  .app-actions{
+    display:grid;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    width:100%;
+  }
+
+  .app-actions .btn,
+  .app-actions a,
+  .app-actions button{
+    width:100%;
+  }
+}
+
+@media (max-width:560px){
+  .site,
+  .wrap{
+    padding:12px;
+  }
+
+  header.app-header,
+  .card,
+  .cardx{
+    border-radius:14px;
+  }
+
+  .app-actions{
+    grid-template-columns:1fr;
+  }
+}
